@@ -294,7 +294,6 @@ namespace Dependencies
         {
 
             BinaryDatabase = new Dictionary<string, PE>();
-            FilepathDatabase = new Dictionary<string, PE>();
             BinaryDatabaseLock = new Object();
             LruCache = new List<string>();
 
@@ -379,7 +378,6 @@ namespace Dependencies
 
             // flush the cache
             BinaryDatabase.Clear();
-            FilepathDatabase.Clear();
         }
 
         public void GetBinaryAsync(string PePath, RunWorkerCompletedEventHandler Callback = null)
@@ -409,15 +407,6 @@ namespace Dependencies
                 return null;
             }
 
-            string Fullpath = Path.GetFullPath(PePath);
-            if (FilepathDatabase.ContainsKey(Fullpath))
-            {
-                // TODO : update LRU cache
-                PE sShadowBinary = FilepathDatabase[Fullpath];
-                sShadowBinary.Filepath = Fullpath;
-                return sShadowBinary;
-            }
-
             string PeHash = GetBinaryHash(PePath);
             //Debug.WriteLine(String.Format("File {0:s} hash : {1:s} ", PePath, PeHash), "BinaryCache");
 
@@ -443,7 +432,6 @@ namespace Dependencies
 
                     LruCache.Add(PeHash);
                     BinaryDatabase.Add(PeHash, NewShadowBinary);
-                    FilepathDatabase.Add(Fullpath, NewShadowBinary);
                 }
             }
 
@@ -478,7 +466,6 @@ namespace Dependencies
         #region Members
         private List<string> LruCache;
         private Dictionary<string, PE> BinaryDatabase;
-        private Dictionary<string, PE> FilepathDatabase;
         private Object BinaryDatabaseLock;
 
         private string BinaryCacheFolderPath;
