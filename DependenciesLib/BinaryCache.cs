@@ -293,10 +293,7 @@ namespace Dependencies
     {
         public BinaryCacheImpl(string ApplicationAppDataPath, int _MaxBinaryCount)
         {
-            BinaryDatabase = new Dictionary<string, Lazy<PE>>();
-            BinaryDatabaseLock = new Object();
-            LruCache = new List<string>();
-
+            BinaryDatabase = new Dictionary<string, PE>();
             MaxBinaryCount = _MaxBinaryCount;
             string platform = (IntPtr.Size == 8) ? "x64" : "x86";
 
@@ -306,15 +303,6 @@ namespace Dependencies
 
         public override void Load()
         {
-            // load cached file order by LastAccessTime to make LRU always available
-            foreach (var cachedBinaryFile in new DirectoryInfo(BinaryCacheFolderPath).EnumerateFiles()
-                .OrderByDescending(fi => fi.LastAccessTime))
-            {
-                var peHash = cachedBinaryFile.Name;
-                LruCache.Add(peHash);
-                BinaryDatabase.Add(peHash, new Lazy<PE>(() => LoadCachedBinary(peHash), true));
-            }
-
             string System32Folder = Environment.GetFolderPath(Environment.SpecialFolder.System);
             string SysWow64Folder = Environment.GetFolderPath(Environment.SpecialFolder.SystemX86);
 
@@ -347,40 +335,26 @@ namespace Dependencies
 
         public override void Unload()
         {
-            // cut off the LRU cache
-            LruCache = LruCache.GetRange(0, Math.Min(LruCache.Count, MaxBinaryCount));
-
-            foreach (var CachedBinary in Directory.EnumerateFiles(BinaryCacheFolderPath))
+            foreach (var kv in BinaryDatabase)
             {
-                string PeHash = GetBinaryHash(CachedBinary);
+                kv.Value.Unload();
+            }
+            BinaryDatabase.Clear();
 
-                if (LruCache.Find(Hash => (Hash == PeHash)) == null)
+            foreach (var file in new DirectoryInfo(BinaryCacheFolderPath).EnumerateFiles()
+                .OrderByDescending(fi => fi.LastAccessTime).Skip(MaxBinaryCount))
+            {
+                try
                 {
-                    // Force map unloading before deleting file
-                    if (BinaryDatabase.ContainsKey(PeHash))
-                    {
-                        var lazyPE = BinaryDatabase[PeHash];
-                        if (lazyPE.IsValueCreated)
-                        {
-                            lazyPE.Value.Unload();
-                        }
-                    }
-
-                    try
-                    {
-                        File.Delete(CachedBinary);
-                    }
-                    catch (System.UnauthorizedAccessException uae)
-                    {
-                        // The BinaryCache is shared among serveral Dependencies.exe instance
-                        // so only the last one alive can clear the cache.
-                        Debug.WriteLine("[BinaryCache] Could not unload file {0:s} : {1:s} ", CachedBinary, uae);
-                    }
+                    file.Delete();
+                }
+                catch (System.UnauthorizedAccessException uae)
+                {
+                    // The BinaryCache is shared among serveral Dependencies.exe instance
+                    // so only the last one alive can clear the cache.
+                    Debug.WriteLine("[BinaryCache] Could not unload file {0:s} : {1:s} ", file.FullName, uae);
                 }
             }
-
-            // flush the cache
-            BinaryDatabase.Clear();
         }
 
         private PE LoadCachedBinary(string peHash)
@@ -388,11 +362,6 @@ namespace Dependencies
             var cachedBinaryFile = Path.Combine(BinaryCacheFolderPath, peHash);
             if (!NativeFile.Exists(cachedBinaryFile))
             {
-                lock (BinaryDatabaseLock)
-                {
-                    LruCache.Remove(peHash);
-                    BinaryDatabase.Remove(peHash);
-                }
                 return null;
             }
 
@@ -408,11 +377,6 @@ namespace Dependencies
 
             if (!cachedPE.Load())
             {
-                lock (BinaryDatabaseLock)
-                {
-                    LruCache.Remove(peHash);
-                    BinaryDatabase.Remove(peHash);
-                }
                 return null;
             }
 
@@ -449,32 +413,34 @@ namespace Dependencies
 
             // A sync lock is mandatory here in order not to load twice the
             // same binary from two differents workers
-            lock (BinaryDatabaseLock)
+            PE cachedPE;
+            lock (BinaryDatabase)
             {
-                bool hit = BinaryDatabase.ContainsKey(PeHash);
-
-                // Cache "miss"
-                if (!hit)
+                // Memory Cache "miss"
+                if (!BinaryDatabase.TryGetValue(PeHash, out cachedPE))
                 {
-                    string DestFilePath = Path.Combine(BinaryCacheFolderPath, PeHash);
-                    if (!File.Exists(DestFilePath) && (DestFilePath != PePath))
+                    cachedPE = LoadCachedBinary(PeHash);
+                    if (cachedPE == null)
                     {
-                        // Debug.WriteLine(String.Format("FileCopy from {0:s} to {1:s}", PePath, DestFilePath), "BinaryCache");
-                        NativeFile.Copy(PePath, DestFilePath);
+                        // Disk Cache miss
+                        string DestFilePath = Path.Combine(BinaryCacheFolderPath, PeHash);
+                        if (!File.Exists(DestFilePath) && (DestFilePath != PePath))
+                        {
+                            // Debug.WriteLine(String.Format("FileCopy from {0:s} to {1:s}", PePath, DestFilePath), "BinaryCache");
+                            NativeFile.Copy(PePath, DestFilePath);
+                        }
+                        cachedPE = LoadCachedBinary(PeHash);
+                        if (cachedPE == null)
+                        {
+                            BinaryDatabase.Remove(PeHash);
+                            return null;
+                        }
                     }
-
-                    LruCache.Add(PeHash);
-                    BinaryDatabase.Add(PeHash, new Lazy<PE>(() => LoadCachedBinary(PeHash)));
+                    BinaryDatabase.Add(PeHash, cachedPE);
                 }
             }
 
-            // Cache "Hit"
-            UpdateLru(PeHash);
-            PE ShadowBinary = BinaryDatabase[PeHash].Value;
-            if (ShadowBinary == null)
-            {
-                return null;
-            }
+            PE ShadowBinary = cachedPE;
             ShadowBinary.Filepath = Path.GetFullPath(PePath); // convert any paths to an absolute one.
 
             Debug.WriteLine(String.Format("File {0:s} loaded from {1:s}", PePath, Path.Combine(BinaryCacheFolderPath, PeHash)), "BinaryCache");
@@ -486,27 +452,11 @@ namespace Dependencies
             return NativeFile.GetPartialHashFile(PePath, 1024);
         }
 
-        protected void UpdateLru(string PeHash)
-        {
-            string MatchingHash = LruCache.Find(Hash => (Hash == PeHash));
-            if (null == MatchingHash)
-                return;
-
-            lock (BinaryDatabaseLock)
-            {
-                // prepend the matching item at the beginning of the list
-                LruCache.Remove(MatchingHash);
-                LruCache.Insert(0, MatchingHash);
-            }
-        }
-
         #region Members
-        private List<string> LruCache;
-        private Dictionary<string, Lazy<PE>> BinaryDatabase;
-        private Object BinaryDatabaseLock;
+        private readonly Dictionary<string, PE> BinaryDatabase;
+        private int MaxBinaryCount;
 
         private string BinaryCacheFolderPath;
-        private int MaxBinaryCount;
 
         #endregion Members
     }
