@@ -189,7 +189,8 @@ namespace Dependencies
                 return;
             }
 
-
+            // prevent the existing items appear multiple times
+            RecentsItems.Clear();
             foreach (var RecentFilePath in Properties.Settings.Default.RecentFiles)
             {
                 // Ignore empty dummy entries
