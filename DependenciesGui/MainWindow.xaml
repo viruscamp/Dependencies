@@ -201,6 +201,13 @@
                 x:Name="AppStatusBarMessage">
                 "Welcome to Dependencies !"
             </StatusBarItem>
+
+            <StatusBarItem HorizontalAlignment="Right">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock>Loaded Modules:&#160;</TextBlock>
+                    <TextBlock x:Name="LoadedModuleCount" Text="0"></TextBlock>
+                </StackPanel>
+            </StatusBarItem>
         </StatusBar>
 
 

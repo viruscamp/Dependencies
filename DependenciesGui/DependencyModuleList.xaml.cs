@@ -40,9 +40,17 @@ namespace Dependencies
             return hashcode;
         }
 
-        public string Name;
-        public string Filepath;
-        public ModuleFlag Flags;
+        public override bool Equals(object obj)
+        {
+            return obj is ModuleCacheKey key &&
+                   Name == key.Name &&
+                   Filepath == key.Filepath &&
+                   Flags == key.Flags;
+        }
+
+        public readonly string Name;
+        public readonly string Filepath;
+        public readonly ModuleFlag Flags;
     }
 
 
