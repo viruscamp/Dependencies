@@ -1349,11 +1349,11 @@ namespace Dependencies
         private void CopyFilePath_Executed(object sender, ExecutedRoutedEventArgs e)
         {
             ModuleTreeViewItem Source = e.Source as ModuleTreeViewItem;
-            String SelectedModuleName = Source.GetTreeNodeHeaderName(Dependencies.Properties.Settings.Default.FullPath);
+            String SelectedModuleName = Source.ModuleFilePath;
             if (Source == null)
                 return;
 
-            Clipboard.SetText(SelectedModuleName);
+            Clipboard.SetDataObject(SelectedModuleName);
         }
 
         private void OpenInExplorer_Executed(object sender, ExecutedRoutedEventArgs e)
@@ -1362,7 +1362,7 @@ namespace Dependencies
             if (Source == null)
                 return;
 
-            String SelectedModuleName = Source.GetTreeNodeHeaderName(Dependencies.Properties.Settings.Default.FullPath);
+            String SelectedModuleName = Source.ModuleFilePath;
             String commandParameter = "/select,\"" + SelectedModuleName + "\"";
 
             Process.Start("explorer.exe", commandParameter);
